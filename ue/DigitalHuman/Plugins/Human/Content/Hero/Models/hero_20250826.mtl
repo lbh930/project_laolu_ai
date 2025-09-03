@@ -1,0 +1,13 @@
+# Blender 4.5.2 LTS MTL File: 'None'
+# www.blender.org
+
+newmtl tex_u1_v1
+Ns 0.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.000000 0.000000 0.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 1
+map_Kd C:/laolu.ai/temp/scans/new_scan/tex_u1_v1_diffuse.jpg
+map_Bump C:/laolu.ai/temp/scans/new_scan/tex_u1_v1_normal.jpg

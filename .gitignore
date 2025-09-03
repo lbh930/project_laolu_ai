@@ -1,0 +1,10 @@
+﻿.idea/*
+**/.idea/*
+temp/*
+**/.vs/*
+**/.vsconfig
+**/Saved/*
+**/Intermediate/*
+**/DerivedDataCache/*
+**/Binaries/*
+*.sln

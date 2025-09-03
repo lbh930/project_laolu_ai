@@ -8,3 +8,4 @@ temp/*
 **/DerivedDataCache/*
 **/Binaries/*
 *.sln
+**/Nvigi/Models/

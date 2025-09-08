@@ -16,6 +16,6 @@ public class DigitalHumanTarget : TargetRules
 
 	private void RegisterModulesCreatedByRider()
 	{
-		ExtraModuleNames.AddRange(new string[] { "TextToFace", "Chatbot" });
+		ExtraModuleNames.AddRange(new string[] { "TextToFace", "Chatbot", "PromptGenerator" });
 	}
 }

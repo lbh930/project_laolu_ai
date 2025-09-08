@@ -10,7 +10,7 @@ public class Chatbot : ModuleRules
         });
 
         PrivateDependencyModuleNames.AddRange(new[] {
-            "HTTP", "Json", "JsonUtilities", "Slate", "SlateCore"
+            "HTTP", "Json", "JsonUtilities", "Slate", "SlateCore", "PromptGenerator"
         });
     }
 }

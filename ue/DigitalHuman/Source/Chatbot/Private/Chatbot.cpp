@@ -6,6 +6,8 @@
 #include "Json.h"
 #include "Async/Async.h"
 #include "Containers/Ticker.h"   // ✅ for FTSTicker
+#include "PromptGenerator.h"  // 新模块头
+#include "Misc/Paths.h"
 
 static TSharedPtr<FJsonObject> MakeMsg(const FString& Role, const FString& Content)
 {
@@ -53,10 +55,35 @@ void UChatbotClient::SendChat(const TArray<FString>& Roles, const TArray<FString
     Root->SetNumberField(TEXT("temperature"), Temperature);
 
     TArray<TSharedPtr<FJsonValue>> Msgs;
-    for (int32 i=0;i<Roles.Num();++i)
+    
+    // [NEW] 使用 PromptGenerator 从 YAML 注入预置记忆 / 风格（失败则回退到原逻辑）
+    bool bPGBuilt = false;
     {
-        Msgs.Add(MakeShared<FJsonValueObject>(MakeMsg(Roles[i], Contents[i])));
+        UPromptGenerator* PG = NewObject<UPromptGenerator>(this);
+        if (PG)
+        {
+            const FString YamlPath = FPaths::ProjectContentDir() / TEXT("Persona/Memory.yaml");
+            if (PG->LoadFromYaml(YamlPath))
+            {
+                PG->BuildMessages(Roles, Contents, Msgs);
+                PG->MaybeAttachStop(Root);
+                bPGBuilt = true;
+            }
+        }else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("Failed to load Memory.yaml"));
+        }
     }
+
+    if (!bPGBuilt)
+    {
+        // 原始构造方式（回退）
+        for (int32 i=0;i<Roles.Num();++i)
+        {
+            Msgs.Add(MakeShared<FJsonValueObject>(MakeMsg(Roles[i], Contents[i])));
+        }
+    }
+    
     Root->SetArrayField(TEXT("messages"), Msgs);
 
     FString Body;
@@ -130,8 +157,33 @@ void UChatbotClient::SendChatStream(const TArray<FString>& Roles, const TArray<F
     Root->SetBoolField(TEXT("stream"), true);
     Root->SetNumberField(TEXT("temperature"), Temperature);
     TArray<TSharedPtr<FJsonValue>> Msgs;
-    for (int32 i=0;i<Roles.Num();++i)
-        Msgs.Add(MakeShared<FJsonValueObject>(MakeMsg(Roles[i], Contents[i])));
+
+    // [NEW] 使用 PromptGenerator 从 YAML 注入预置记忆 / 风格（失败则回退到原逻辑）
+    bool bPGBuilt = false;
+    {
+        UPromptGenerator* PG = NewObject<UPromptGenerator>(this);
+        if (PG)
+        {
+            const FString YamlPath = FPaths::ProjectContentDir() / TEXT("Persona/Memory.yaml");
+            if (PG->LoadFromYaml(YamlPath))
+            {
+                PG->BuildMessages(Roles, Contents, Msgs);
+                PG->MaybeAttachStop(Root);
+                bPGBuilt = true;
+            }else
+            {
+                UE_LOG(LogTemp, Warning, TEXT("Failed to load Memory.yaml"));
+            }
+        }
+    }
+
+    if (!bPGBuilt)
+    {
+        // 原始构造方式（回退）
+        for (int32 i=0;i<Roles.Num();++i)
+            Msgs.Add(MakeShared<FJsonValueObject>(MakeMsg(Roles[i], Contents[i])));
+    }
+
     Root->SetArrayField(TEXT("messages"), Msgs);
 
     FString Body; TSharedRef<TJsonWriter<>> W = TJsonWriterFactory<>::Create(&Body);

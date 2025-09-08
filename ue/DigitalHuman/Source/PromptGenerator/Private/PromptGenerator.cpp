@@ -1,6 +1,7 @@
 ﻿#include "PromptGenerator.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "Json.h"
 
 TSharedPtr<FJsonObject> UPromptGenerator::MakeMsg(const FString& Role, const FString& Content)
 {
@@ -10,20 +11,41 @@ TSharedPtr<FJsonObject> UPromptGenerator::MakeMsg(const FString& Role, const FSt
     return Obj;
 }
 
+FString UPromptGenerator::StripQuotes(const FString& S)
+{
+    FString T = S;
+    T.TrimStartAndEndInline();
+    if (T.StartsWith(TEXT("\"")) && T.EndsWith(TEXT("\"")) && T.Len() >= 2) return T.Mid(1, T.Len()-2);
+    if (T.StartsWith(TEXT("'"))  && T.EndsWith(TEXT("'"))  && T.Len() >= 2) return T.Mid(1, T.Len()-2);
+    return T;
+}
+
+int32 UPromptGenerator::LeadingSpaces(const FString& S)
+{
+    int32 C = 0;
+    for (int32 i=0;i<S.Len();++i)
+    {
+        const TCHAR ch = S[i];
+        if (ch == TEXT(' ')) ++C;
+        else if (ch == TEXT('\t')) C += 2; // 粗略把 tab 当 2 空格
+        else break;
+    }
+    return C;
+}
+
 FString UPromptGenerator::BuildSystemPrompt() const
 {
     TArray<FString> Lines;
     if (!Persona.IsEmpty())      Lines.Add(Persona);
-    if (!Style.IsEmpty())        Lines.Add("Style: " + Style);
-    if (!Constraints.IsEmpty())  Lines.Add("Constraints: " + Constraints);
-    if (!OutputFormat.IsEmpty()) Lines.Add("Output format: " + OutputFormat);
+    if (!Style.IsEmpty())        Lines.Add(TEXT("Style: ") + Style);
+    if (!Constraints.IsEmpty())  Lines.Add(TEXT("Constraints: ") + Constraints);
+    if (!OutputFormat.IsEmpty()) Lines.Add(TEXT("Output format: ") + OutputFormat);
 
     if (TTSFriendly)
     {
         Lines.Add(TEXT("For TTS streaming: use short sentences with clear punctuation (.,!?). No markdown."));
     }
 
-    // 预置记忆 Facts
     if (Facts.Num() > 0)
     {
         Lines.Add(TEXT("=== Memory Context ==="));
@@ -54,7 +76,7 @@ void UPromptGenerator::BuildMessages(const TArray<FString>& Roles,
     // system
     OutMsgs.Add(MakeShared<FJsonValueObject>(MakeMsg(TEXT("system"), BuildSystemPrompt())));
 
-    // few-shots
+    // few_shots
     for (const auto& FS : FewShots)
     {
         if (!FS.User.IsEmpty())
@@ -76,14 +98,7 @@ void UPromptGenerator::MaybeAttachStop(TSharedPtr<FJsonObject> Root) const
     Root->SetArrayField(TEXT("stop"), Stops);
 }
 
-// ======= 极简 YAML 解析实现（子集） =======
-
-static FString TrimLeftN(const FString& S, int32 N)
-{
-    if (N <= 0) return S;
-    if (N >= S.Len()) return TEXT("");
-    return S.Mid(N);
-}
+// ================== YAML 子集解析 ==================
 
 bool UPromptGenerator::ParseYaml(const FString& Text)
 {
@@ -91,85 +106,182 @@ bool UPromptGenerator::ParseYaml(const FString& Text)
     Persona.Empty(); Style.Empty(); Constraints.Empty(); OutputFormat.Empty();
     TTSFriendly = true; Facts.Reset(); Stop.Reset(); FewShots.Reset();
 
-    enum class ESection { None, Facts, Stop, FewShots, Unknown };
+    enum class ESection { None, Facts, Stop, FewShots };
     ESection Section = ESection::None;
 
-    FPGFewShot PendingFS;
-    bool bInsideFSItem = false;
+    // 处理多行标量：key: | 之后的块
+    bool   bInBlock = false;
+    FString BlockKey;
+    int32  BlockIndent = 0;
+    TArray<FString> BlockLines;
 
-    TArray<FString> Lines;
-    Text.ParseIntoArrayLines(Lines, /*CullEmpty*/false);
-
-    auto SetKV = [&](const FString& Key, const FString& Val)
+    auto FlushBlock = [&]()
     {
-        const FString K = Key.ToLower();
+        if (!bInBlock) return;
+        FString Val = FString::Join(BlockLines, TEXT("\n"));
+        Val.TrimStartAndEndInline();
 
-        if (K == TEXT("persona"))            { Persona      = Val; return; }
-        if (K == TEXT("style"))              { Style        = Val; return; }
-        if (K == TEXT("constraints"))        { Constraints  = Val; return; }
-        if (K == TEXT("output_format"))      { OutputFormat = Val; return; }
-        if (K == TEXT("tts_friendly"))       { TTSFriendly  = (Val.ToLower()==TEXT("true") || Val==TEXT("1")); return; }
+        const FString Key = BlockKey.ToLower();
+        if (Key == TEXT("persona"))       Persona      = Val;
+        else if (Key == TEXT("style"))    Style        = Val;
+        else if (Key == TEXT("constraints"))  Constraints  = Val;
+        else if (Key == TEXT("output_format")) OutputFormat = Val;
+        // 其他块忽略
 
-        // 未知顶层键：忽略
+        bInBlock = false;
+        BlockKey.Empty();
+        BlockLines.Reset();
+        BlockIndent = 0;
     };
 
-    auto FlushPendingFS = [&]()
+    // few_shots 累积器
+    FPGFewShot PendingFS;
+    bool bInsideFSItem = false;
+    auto FlushFS = [&]()
     {
         if (!PendingFS.User.IsEmpty() || !PendingFS.Assistant.IsEmpty())
             FewShots.Add(PendingFS);
         PendingFS = FPGFewShot{};
     };
 
+    // 逐行
+    TArray<FString> Lines;
+    Text.ParseIntoArrayLines(Lines, /*CullEmpty*/false);
+
     for (int32 li=0; li<Lines.Num(); ++li)
     {
-        FString L = Lines[li];
-        // 去 BOM/制表符 → 空白
-        L.TrimStartAndEndInline();
-        if (L.IsEmpty() || L.StartsWith(TEXT("#"))) continue;
+        FString Raw = Lines[li];
 
-        // 顶层列表项或键值
-        // 匹配 list 开始：facts: / stop: / few_shots:
-        if (!L.StartsWith(TEXT("-")) && L.EndsWith(TEXT(":")))
+        // 注释 & BOM/空白
+        // （注意：在多行块模式下，空行也是块内容之一）
+        if (!bInBlock)
         {
-            // 新 section
-            const FString Key = L.LeftChop(1).TrimStartAndEnd();
-            const FString KL  = Key.ToLower();
-
-            // 切换 section 之前，若处于 few_shots item，先 flush
-            if (bInsideFSItem) { FlushPendingFS(); bInsideFSItem = false; }
-
-            if (KL == TEXT("facts"))      { Section = ESection::Facts; continue; }
-            if (KL == TEXT("stop"))       { Section = ESection::Stop;  continue; }
-            if (KL == TEXT("few_shots"))  { Section = ESection::FewShots; continue; }
-
-            Section = ESection::Unknown; // 未知块
-            continue;
-        }
-
-        // 顶层 key: value
-        int32 ColonIdx = -1;
-        if (Section == ESection::None || Section == ESection::Unknown)
-        {
-            if (L.FindChar(TEXT(':'), ColonIdx) && ColonIdx > 0)
+            FString Tmp = Raw;
+            Tmp.TrimStartAndEndInline();
+            if (Tmp.IsEmpty() || Tmp.StartsWith(TEXT("#")))
             {
-                const FString Key = L.Left(ColonIdx).TrimStartAndEnd();
-                FString Val = L.Mid(ColonIdx+1).TrimStartAndEnd();
-                // 去掉可能的引号
-                Val.RemoveFromStart(TEXT("\"")); Val.RemoveFromEnd(TEXT("\""));
-                Val.RemoveFromStart(TEXT("'"));  Val.RemoveFromEnd(TEXT("'"));
-                SetKV(Key, Val);
                 continue;
             }
         }
 
-        // 处理列表
+        // 进入/处理 多行块
+        if (bInBlock)
+        {
+            // 结束条件：遇到更浅缩进且非空且不是注释 → 说明到顶层了
+            const int32 Ind = LeadingSpaces(Raw);
+            FString Stripped = Raw.Mid(Ind);
+
+            if (!Stripped.TrimStartAndEnd().IsEmpty() && Ind < BlockIndent && !Stripped.StartsWith(TEXT("#")))
+            {
+                // 块结束，先回退一行，后续正常处理
+                FlushBlock();
+                // 让这一行按普通逻辑再走一遍：
+                // （通过减少 li 让 for 循环重新处理该行）
+                li--;
+                continue;
+            }
+            else
+            {
+                // 仍在块内：把当前行按块缩进裁剪后追加
+                FString AppendLine;
+                if (Stripped.IsEmpty())
+                {
+                    AppendLine = TEXT(""); // 空行保留
+                }
+                else
+                {
+                    const int32 Cut = FMath::Max(0, Ind - BlockIndent);
+                    AppendLine = Raw.Mid(Ind); // 以块基准去除缩进
+                }
+                BlockLines.Add(AppendLine);
+                continue;
+            }
+        }
+
+        // 正常模式
+        FString Line = Raw;
+        Line.TrimStartAndEndInline();
+        const int32 Indent = LeadingSpaces(Raw);
+        const bool  IsTopLevel = (Indent == 0);
+
+        // 识别块起始： key: |
+        if (Line.EndsWith(TEXT("|")))
+        {
+            int32 C = -1;
+            if (Line.FindChar(TEXT(':'), C) && C>0)
+            {
+                FString Key = Line.Left(C).TrimStartAndEnd();
+                FString After = Line.Mid(C+1).TrimStartAndEnd(); // 应该是 "|"
+                if (After == TEXT("|"))
+                {
+                    bInBlock   = true;
+                    BlockKey   = Key;
+                    BlockIndent = -1;
+
+                    // 确定块基线缩进：取下一行的缩进
+                    // （如果下一行不存在或是空，我们等到下一轮再设置）
+                    // 这里不立即设置 BlockIndent，等第一条块内容行来时设置
+                    // 但为了实现，我们在第一条块内容行时若 BlockIndent== -1，就用该行缩进
+                    // —— 在上面 bInBlock 分支里处理
+                    // 为简单起见，我们先设置 2 个空格基线，如果下一行更深会在第一次追加时被覆盖
+                    BlockIndent = 0;
+                    BlockLines.Reset();
+
+                    // 如果下一行就来了，会在上面的 bInBlock 分支累积
+                    continue;
+                }
+            }
+        }
+
+        // 顶层块：facts / stop / few_shots
+        if (IsTopLevel && Line.EndsWith(TEXT(":")))
+        {
+            const FString Key = Line.LeftChop(1).TrimStartAndEnd().ToLower();
+
+            // 切换 section 前，若在 few_shots 的 item 里，先 flush
+            if (Section == ESection::FewShots && bInsideFSItem) { FlushFS(); bInsideFSItem = false; }
+
+            if      (Key == TEXT("facts"))     { Section = ESection::Facts;     continue; }
+            else if (Key == TEXT("stop"))      { Section = ESection::Stop;      continue; }
+            else if (Key == TEXT("few_shots")) { Section = ESection::FewShots;  continue; }
+            else
+            {
+                Section = ESection::None;
+                continue;
+            }
+        }
+
+        // 顶层 key: value（例如 tts_friendly: true）
+        {
+            int32 C = -1;
+            if (IsTopLevel && Line.FindChar(TEXT(':'), C) && C>0)
+            {
+                const FString Key = Line.Left(C).TrimStartAndEnd().ToLower();
+                FString Val = Line.Mid(C+1).TrimStartAndEnd();
+                Val = StripQuotes(Val);
+
+                if      (Key == TEXT("persona"))        { Persona      = Val; }
+                else if (Key == TEXT("style"))          { Style        = Val; }
+                else if (Key == TEXT("constraints"))    { Constraints  = Val; }
+                else if (Key == TEXT("output_format"))  { OutputFormat = Val; }
+                else if (Key == TEXT("tts_friendly"))   { const FString L = Val.ToLower(); TTSFriendly = (L==TEXT("true") || L==TEXT("1") || L==TEXT("yes")); }
+                else
+                {
+                    // 未知顶层键：忽略
+                    UE_LOG(LogTemp, Warning, TEXT("Prompt Generator: Unknown Key!"));
+                }
+                continue;
+            }
+        }
+
+        // 列表处理
         if (Section == ESection::Facts)
         {
-            if (L.StartsWith(TEXT("-")))
+            //   - "..."
+            if (Line.StartsWith(TEXT("-")))
             {
-                FString Item = TrimLeftN(L, 1).TrimStartAndEnd();
-                Item.RemoveFromStart(TEXT("\"")); Item.RemoveFromEnd(TEXT("\""));
-                Item.RemoveFromStart(TEXT("'"));  Item.RemoveFromEnd(TEXT("'"));
+                FString Item = Line.Mid(1).TrimStartAndEnd();
+                Item = StripQuotes(Item);
                 if (!Item.IsEmpty()) Facts.Add(Item);
             }
             continue;
@@ -177,11 +289,10 @@ bool UPromptGenerator::ParseYaml(const FString& Text)
 
         if (Section == ESection::Stop)
         {
-            if (L.StartsWith(TEXT("-")))
+            if (Line.StartsWith(TEXT("-")))
             {
-                FString Item = TrimLeftN(L, 1).TrimStartAndEnd();
-                Item.RemoveFromStart(TEXT("\"")); Item.RemoveFromEnd(TEXT("\""));
-                Item.RemoveFromStart(TEXT("'"));  Item.RemoveFromEnd(TEXT("'"));
+                FString Item = Line.Mid(1).TrimStartAndEnd();
+                Item = StripQuotes(Item);
                 if (!Item.IsEmpty()) Stop.Add(Item);
             }
             continue;
@@ -189,49 +300,46 @@ bool UPromptGenerator::ParseYaml(const FString& Text)
 
         if (Section == ESection::FewShots)
         {
-            //  - user: ...
-            //    assistant: ...
-            if (L.StartsWith(TEXT("-")))
+            // 支持两种：同一行 "- user: ..." 或多行
+            if (Line.StartsWith(TEXT("-")))
             {
-                // 开始新 few_shot
-                if (bInsideFSItem) { FlushPendingFS(); }
+                // 新条目开始
+                if (bInsideFSItem) { FlushFS(); }
                 bInsideFSItem = true;
+                PendingFS = FPGFewShot{};
 
-                FString Rest = TrimLeftN(L, 1).TrimStartAndEnd();
+                FString Rest = Line.Mid(1).TrimStartAndEnd();
                 int32 C = -1;
                 if (Rest.FindChar(TEXT(':'), C) && C>0)
                 {
                     FString Key = Rest.Left(C).TrimStartAndEnd().ToLower();
-                    FString Val = Rest.Mid(C+1).TrimStartAndEnd();
-                    Val.RemoveFromStart(TEXT("\"")); Val.RemoveFromEnd(TEXT("\""));
-                    Val.RemoveFromStart(TEXT("'"));  Val.RemoveFromEnd(TEXT("'"));
-                    if (Key==TEXT("user")) PendingFS.User = Val;
-                    else if (Key==TEXT("assistant")) PendingFS.Assistant = Val;
+                    FString Val = StripQuotes(Rest.Mid(C+1).TrimStartAndEnd());
+                    if (Key == TEXT("user"))      PendingFS.User = Val;
+                    else if (Key == TEXT("assistant")) PendingFS.Assistant = Val;
                 }
                 continue;
             }
             else
             {
-                // 缩进行（继续填充当前 few_shot）
-                int32 C2=-1;
-                if (L.FindChar(TEXT(':'), C2) && C2>0)
+                // 条目内的缩进行： user: ... / assistant: ...
+                int32 C = -1;
+                if (Line.FindChar(TEXT(':'), C) && C>0)
                 {
-                    FString Key = L.Left(C2).TrimStartAndEnd().ToLower();
-                    FString Val = L.Mid(C2+1).TrimStartAndEnd();
-                    Val.RemoveFromStart(TEXT("\"")); Val.RemoveFromEnd(TEXT("\""));
-                    Val.RemoveFromStart(TEXT("'"));  Val.RemoveFromEnd(TEXT("'"));
-
-                    if (Key==TEXT("user")) PendingFS.User = Val;
-                    else if (Key==TEXT("assistant")) PendingFS.Assistant = Val;
+                    FString Key = Line.Left(C).TrimStartAndEnd().ToLower();
+                    FString Val = StripQuotes(Line.Mid(C+1).TrimStartAndEnd());
+                    if (Key == TEXT("user"))      PendingFS.User = Val;
+                    else if (Key == TEXT("assistant")) PendingFS.Assistant = Val;
                 }
                 continue;
             }
         }
 
-        // 其他未知内容：忽略
+        // 其他情况：忽略
     }
 
-    if (bInsideFSItem) { FlushPendingFS(); }
+    // 收尾
+    if (bInBlock)   { FlushBlock(); }
+    if (bInsideFSItem) { FlushFS(); }
 
     return true;
 }

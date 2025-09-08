@@ -9,3 +9,4 @@ temp/*
 **/Binaries/*
 *.sln
 **/Nvigi/Models/
+**/ue/DigitalHuma/Packaged_Unreal_Projects/*

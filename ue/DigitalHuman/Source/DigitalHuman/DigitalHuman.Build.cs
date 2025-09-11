@@ -22,6 +22,8 @@ public class DigitalHuman : ModuleRules
 		PrivateDependencyModuleNames.AddRange(new string[] { "TextToFace" });
 		
 		PrivateDependencyModuleNames.AddRange(new string[] { "Chatbot" });
+		
+		PrivateDependencyModuleNames.AddRange(new string[] { "WebInterface" });
 
 		// Uncomment if you are using online features
 		// PrivateDependencyModuleNames.Add("OnlineSubsystem");

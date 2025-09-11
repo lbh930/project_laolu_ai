@@ -24,6 +24,7 @@
     },
     "dependencies": {
         "@epicgames-ps/lib-pixelstreamingfrontend-ue5.6": "*",
-        "@epicgames-ps/lib-pixelstreamingfrontend-ui-ue5.6": "*"
+        "@epicgames-ps/lib-pixelstreamingfrontend-ui-ue5.6": "*",
+        "@arcware-cloud/pixelstreaming-websdk": "^1.0.0"
     }
 }

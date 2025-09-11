@@ -2,7 +2,9 @@
 #include "TextToFaceWidget.h"
 #include "Components/EditableTextBox.h"
 #include "Components/Button.h"
+#include "WebInterfaceSubsystem.h"
 #include "TextToFace.h"
+
 
 void UTextToFaceWidget::NativeConstruct()
 {
@@ -27,20 +29,23 @@ void UTextToFaceWidget::NativeConstruct()
 		ChatbotClient->Model   = TEXT("deepseek-chat");
 	}
 
+	// 绑定 WebInterface 的文本输入事件（最小改动）
+	if (UWebInterfaceSubsystem* Web = UWebInterfaceSubsystem::Get(this))
+	{
+		Web->OnUserInputReceived.AddDynamic(this, &UTextToFaceWidget::HandleUserInputReceived);
+	}
+
 	if (SendButton)
 	{
 		SendButton->OnClicked.AddDynamic(this, &UTextToFaceWidget::OnSendClicked);
 	}
 }
 
-void UTextToFaceWidget::OnSendClicked()
+void UTextToFaceWidget::HandleUserInputReceived(const FString& UserText)
 {
-	if (!InputTextBox || !ChatbotClient || !EngineClass) return;
+	if (UserText.IsEmpty() || !ChatbotClient || !EngineClass) return;
 
-	const FString UserText = InputTextBox->GetText().ToString();
-	if (UserText.IsEmpty()) return;
-
-	// reset streaming state
+	// reset streaming state（与 OnSendClicked 相同）
 	StreamBuffer.Reset();
 	if (UWorld* W = GetWorld())
 	{
@@ -48,22 +53,29 @@ void UTextToFaceWidget::OnSendClicked()
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("UTextToFaceWidget::OnSendClicked() - Can't get world!"));
+		UE_LOG(LogTemp, Warning, TEXT("HandleUserInputReceived() - Can't get world!"));
 	}
-	
+
 	bStreamingInFlight = true;
 
-	// build messages
+	// build messages（与 OnSendClicked 相同）
 	TArray<FString> Roles, Contents;
 	Roles.Add(TEXT("system")); Contents.Add(TEXT("You are a helpful assistant."));
 	Roles.Add(TEXT("user"));   Contents.Add(UserText);
 
-	// 绑定流式回调（直接把可 flush 的文本交引擎）
 	FOnChatDelta OnDelta; OnDelta.BindUFunction(this, FName("HandleChatDelta"));
 	FOnChatResponse OnDone; OnDone.BindUFunction(this, FName("HandleChatDone"));
 	FOnChatError OnErr; OnErr.BindUFunction(this, FName("HandleChatError"));
 
 	ChatbotClient->SendChatStream(Roles, Contents, /*Temperature*/1.0f, OnDelta, OnDone, OnErr);
+}
+
+// UE内置Widget侧的调用
+void UTextToFaceWidget::OnSendClicked()
+{
+	if (!InputTextBox) return;
+	const FString UserText = InputTextBox->GetText().ToString();
+	HandleUserInputReceived(UserText);
 }
 
 void UTextToFaceWidget::HandleChatResponse(const FString& AIResponse)

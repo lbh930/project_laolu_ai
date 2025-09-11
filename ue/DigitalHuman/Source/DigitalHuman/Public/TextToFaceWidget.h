@@ -33,7 +33,7 @@ protected:
 
 private:
 	UFUNCTION() void OnSendClicked();
-
+	
 	// Legacy non-streaming callbacks
 	UFUNCTION() void HandleChatResponse(const FString& AIResponse);
 	UFUNCTION() void HandleChatError(const FString& Error);
@@ -41,6 +41,10 @@ private:
 	// Streaming callbacks（仅从 LLM 收流，交给引擎排队）
 	UFUNCTION() void HandleChatDelta(const FString& Delta);
 	UFUNCTION() void HandleChatDone(const FString& Full);
+
+	// For inputs from PixelStreaming Web Frontend
+	UFUNCTION()
+	void HandleUserInputReceived(const FString& UserText);
 
 	// Chunking / flush helpers
 	void FlushBuffer(bool bForce);

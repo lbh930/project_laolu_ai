@@ -1,6 +1,9 @@
 import { ArcwareInit } from '@arcware-cloud/pixelstreaming-websdk';
 import { createChatBar, wireChatBar } from './chatBar';
 
+// 写死 shareId
+const defaultShareId = "share-beeb6fb6-2bc4-4e14-8df7-6ea9d4f4f9c7";
+
 declare global {
   interface Window {
     arcwareApp?: any;
@@ -62,16 +65,22 @@ function bootArcware(shareId: string, projectId?: string) {
 
 document.addEventListener('DOMContentLoaded', () => {
   const url = new URL(location.href);
-  const shareId = url.searchParams.get('shareId') || '';
+  // 优先 URL 上的 shareId，其次用 Cloudflare Pages 注入的环境变量
+
+  //Print default sharedid
+  console.log("Default ShareId: " + defaultShareId);
+  
+  const shareId = url.searchParams.get('shareId') || defaultShareId;
   const projectId = url.searchParams.get('projectId') || undefined;
 
   if (!shareId) {
     const warn = document.createElement('div');
     warn.style.cssText = 'color:#fff;padding:16px;';
-    warn.textContent = '缺少 shareId（URL 需带 ?shareId=...）';
+    warn.textContent = '缺少 shareId（请在 Cloudflare Pages 环境变量 VITE_ARCWARE_SHARE_ID 中配置）';
     document.body.appendChild(warn);
     return;
   }
 
+  // 启动 Arcware
   bootArcware(shareId, projectId);
 });

@@ -387,3 +387,18 @@ bool UTextToFaceEngine::AnimateWithACE(AActor* TargetActor, const int16* Samples
     }
     return false;
 }
+
+// TextToFaceEngine.cpp
+
+bool UTextToFaceEngine::IsSpeaking() const
+{
+    FScopeLock _(&QueueMtx);
+    return bSpeaking;
+}
+
+int32 UTextToFaceEngine::PendingUtterCount() const
+{
+    FScopeLock _(&QueueMtx);
+    return UtterQueue.Num();
+}
+

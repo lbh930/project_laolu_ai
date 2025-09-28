@@ -9,6 +9,16 @@ class UEditableTextBox;
 class UButton;
 class UTextToFaceEngine;
 
+USTRUCT(BlueprintType)
+struct FTextToFaceSnapshot
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly) bool bReady = false;     // 依赖是否就绪
+	UPROPERTY(BlueprintReadOnly) bool bThinking = false; // LLM是否在流式生成
+	UPROPERTY(BlueprintReadOnly) bool bSpeaking = false; // 估计是否在播放TextToFace
+};
+
 UCLASS()
 class DIGITALHUMAN_API UTextToFaceWidget : public UUserWidget
 {
@@ -23,6 +33,9 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Chatbot")
 	UChatbotClient* ChatbotClient = nullptr;
+
+	UFUNCTION(BlueprintCallable, Category="TextToFace")
+	FTextToFaceSnapshot GetRuntimeSnapshot() const;
 
 protected:
 	virtual void NativeConstruct() override;
@@ -61,6 +74,9 @@ private:
 
 	UPROPERTY(EditAnywhere, Category="Streaming|Chunking")
 	FString SentenceBoundaries = TEXT(".!?。！？\n"); // punctuation boundary
+
+	UPROPERTY(EditAnywhere, Category="TextToFace", meta=(ClampMin="0.1", ClampMax="10.0"))
+	float SpeakWindowSec = 3.0f;
 
 	bool bStreamingInFlight = false;
 };

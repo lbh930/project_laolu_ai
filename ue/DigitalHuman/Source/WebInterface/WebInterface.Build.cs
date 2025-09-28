@@ -21,7 +21,9 @@ public class WebInterface : ModuleRules
                 "Slate",
                 "SlateCore",
                 "Json",
-                "JsonUtilities",    
+                "JsonUtilities",
+                "PixelStreaming2",
+                "PixelStreaming2Input"
             }
         );
     }

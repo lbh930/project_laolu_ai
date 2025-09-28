@@ -202,3 +202,15 @@ void UTextToFaceWidget::NativeDestruct()
 	}
 	Super::NativeDestruct();
 }
+
+FTextToFaceSnapshot UTextToFaceWidget::GetRuntimeSnapshot() const
+{
+	FTextToFaceSnapshot Snap;
+
+	Snap.bReady    = (EngineClass != nullptr) && (ChatbotClient != nullptr);
+	Snap.bThinking = bStreamingInFlight;
+	Snap.bSpeaking = (EngineClass && EngineClass->IsSpeaking());
+
+	return Snap;
+}
+

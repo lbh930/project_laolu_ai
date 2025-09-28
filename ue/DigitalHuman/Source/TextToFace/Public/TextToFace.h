@@ -42,6 +42,14 @@ public:
     UPROPERTY(BlueprintAssignable, Category="TextToFace")
     FOnTTSClipFinished OnTTSClipFinished;
 
+    // 是否正在播报TTS（线程安全只读）
+    UFUNCTION(BlueprintCallable, Category="TextToFace")
+    bool IsSpeaking() const;
+
+    // 待播条数
+    UFUNCTION(BlueprintCallable, Category="TextToFace")
+    int32 PendingUtterCount() const;
+
 private:
     FString XiApiKey;
     FString VoiceId = TEXT("JBFqnCBsd6RMkjVDRZzb");
@@ -56,7 +64,7 @@ private:
 
     // 简单串行队列
     TArray<FUtterItem> UtterQueue; // 简单顺序数组队列
-    FCriticalSection QueueMtx;     // 保护队列
+    mutable FCriticalSection QueueMtx;     // 保护队列
     bool bSpeaking = false;        // 正在消费中
 
 private:

@@ -443,6 +443,10 @@ FZenBlinkCurveVector UZenBlinkFunctionLibrary::CreateCustomBlinkCurve(FZenBlinkS
 		? BlinkParams.BlinkDurationMin
 		: BlinkParams.BlinkDurationMax;
 
+	// Modified: Enforce faster blink.
+	Min /= 2;
+	Max /= 2;
+
 	FZenBlinkCurveVector OutCurve;
 	OutCurve.CurveEndTime = 0.0f;
 	OutCurve.Curve = nullptr;
@@ -473,6 +477,8 @@ FZenBlinkCurveVector UZenBlinkFunctionLibrary::CreateCustomBlinkCurve(FZenBlinkS
 		// Random blink duration in the specified range
 		float BlinkDuration = FMath::FRandRange(FMath::Max(0.0f, Min), Max);
 		float BlinkAmplitude = FMath::FRandRange(BlinkParams.BlinkAmplitudeMin, BlinkParams.BlinkAmplitudeMax);
+
+		UE_LOG(LogTemp, Log, TEXT("Blink Duration %f"), BlinkDuration);
 
 		// Time points
 		float OpenTime = TotalDuration;

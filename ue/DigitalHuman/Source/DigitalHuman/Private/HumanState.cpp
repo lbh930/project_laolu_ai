@@ -27,7 +27,7 @@ void UHumanState::BeginPlay()
 
 bool const UHumanState::CanReceiveNewMessage()
 {
-	return bIsTalking;
+	return !bIsTalking;
 }
 
 // Called every frame

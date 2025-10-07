@@ -43,3 +43,15 @@ laolu-ai/
 ├─ .env.example # Example environment configuration
 ├─ README.md
 └─ LICENSE
+
+## For Testing:
+
+# Local test frontend:
+
+cd web\PixelStreamingInfrastructure\Frontend
+npm run build
+
+cd web\PixelStreamingInfrastructure\SignallingWebServer
+serve -s www -l 5173
+
+http://localhost:5173?shareId=share-beeb6fb6-2bc4-4e14-8df7-6ea9d4f4f9c7

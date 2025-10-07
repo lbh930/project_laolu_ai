@@ -86,16 +86,12 @@ void UWebInterfaceSubsystem::ReceiveUIMessage(const FString& JsonOrText)
 	TSharedPtr<FJsonObject> Root;
 	if (Any.IsValid() && Any->Type == EJson::Object)
 	{
-		UE_LOG(LogWebInterfaceSubsystem, Log, TEXT("Using JSON as object"));
 		Root = Any->AsObject();
 	}
 	else if (Any.IsValid() && Any->Type == EJson::String)
 	{
 		// 收到的是被二次字符串化的 JSON：把字符串再解析一次
 		const FString& Inner = Any->AsString();
-
-		// 打印一次，便于核对
-		UE_LOG(LogWebInterfaceSubsystem, Log, TEXT("Unwrapping double-stringified JSON: %s"), *Inner);
 
 		TSharedRef<TJsonReader<>> Reader2 = TJsonReaderFactory<>::Create(Inner);
 		FJsonSerializer::Deserialize(Reader2, Root);
@@ -126,8 +122,6 @@ void UWebInterfaceSubsystem::ReceiveUIMessage(const FString& JsonOrText)
 		}
 		return;
 	}
-
-	UE_LOG(LogWebInterfaceSubsystem, Log, TEXT("Received request is Json"));
 
 	FString Type;
 	if (Root->TryGetStringField(TEXT("type"), Type))
@@ -191,12 +185,6 @@ bool UWebInterfaceSubsystem::TryParseChatText(const FString& JsonString, FString
 
 void UWebInterfaceSubsystem::HandleCallRequest(const TSharedRef<FJsonObject>& Root)
 {
-	// Log received json object
-	FString LogOutputString;
-	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&LogOutputString);
-	FJsonSerializer::Serialize(Root, Writer);
-	UE_LOG(LogWebInterfaceSubsystem, Log, TEXT("HandleCallRequest JSON: %s"), *LogOutputString);
-	
     // requestId 可选，用于前端对应
     FString RequestId;
     Root->TryGetStringField(TEXT("requestId"), RequestId);
@@ -211,6 +199,9 @@ void UWebInterfaceSubsystem::HandleCallRequest(const TSharedRef<FJsonObject>& Ro
     FString ComponentName, MethodName;
     Root->TryGetStringField(TEXT("component"), ComponentName);
     Root->TryGetStringField(TEXT("method"), MethodName);
+
+	UE_LOG(LogWebInterfaceSubsystem, Log, TEXT("Call %s: by=%s, Value=%s, component=%s, method=%s"),
+		*RequestId, *By, *Value, *ComponentName, *MethodName);
 
     // 1) 找 Actor
     AActor* TargetActor = nullptr;
@@ -239,6 +230,7 @@ void UWebInterfaceSubsystem::HandleCallRequest(const TSharedRef<FJsonObject>& Ro
 
     if (!TargetActor)
     {
+    	UE_LOG(LogWebInterfaceSubsystem, Warning, TEXT("Request %s: Can not find actor %s"), *RequestId, *Value);
         SendPS2Response(false, RequestId, TEXT("Actor not found"), false);
         return;
     }
@@ -247,6 +239,7 @@ void UWebInterfaceSubsystem::HandleCallRequest(const TSharedRef<FJsonObject>& Ro
     UActorComponent* Comp = FindComponentByNameOrClass(TargetActor, ComponentName);
     if (!Comp)
     {
+    	UE_LOG(LogWebInterfaceSubsystem, Warning, TEXT("Request %s: Can not find component %s"), *RequestId, *Value);
         SendPS2Response(false, RequestId, TEXT("Component not found"), false);
         return;
     }
@@ -256,6 +249,7 @@ void UWebInterfaceSubsystem::HandleCallRequest(const TSharedRef<FJsonObject>& Ro
     UFunction* Func = Comp->FindFunction(FuncName);
     if (!Func)
     {
+    	UE_LOG(LogWebInterfaceSubsystem, Warning, TEXT("Request %s: Can not find function %s"), *RequestId, *MethodName);
         SendPS2Response(false, RequestId, TEXT("Method not found"), false);
         return;
     }
@@ -283,10 +277,14 @@ void UWebInterfaceSubsystem::HandleCallRequest(const TSharedRef<FJsonObject>& Ro
 
     if (bHasReturn)
     {
+    	FString returnBoolString = bReturnBool ? TEXT("true") : TEXT("false");
+    	UE_LOG(LogWebInterfaceSubsystem, Log, TEXT("Request %s: Responding result as %s"), *RequestId, *returnBoolString);
         SendPS2Response(true, RequestId, FString(), TOptional<bool>(bReturnBool));
     }
     else
     {
+    	
+    	UE_LOG(LogWebInterfaceSubsystem, Log, TEXT("Request %s: Responding empty response"), *RequestId);
         SendPS2Response(true, RequestId, TEXT("OK (no return)"), false);
     }
 }

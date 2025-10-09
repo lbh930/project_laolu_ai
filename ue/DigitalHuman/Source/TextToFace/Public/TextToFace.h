@@ -60,6 +60,7 @@ private:
     {
         FString Text;
         TWeakObjectPtr<AActor> Target;
+        int32 RetryCount = 0; // 重试次数
     };
 
     // 简单串行队列
@@ -67,8 +68,12 @@ private:
     mutable FCriticalSection QueueMtx;     // 保护队列
     bool bSpeaking = false;        // 正在消费中
 
+    // 重试配置
+    static constexpr int32 MaxRetries = 3;      // 最大重试次数
+    static constexpr float TimeoutSeconds = 10.0f; // HTTP超时时间（秒）
+
 private:
-    void StartTTSRequest(const FString& Text, TWeakObjectPtr<AActor> WeakTarget); // 旧非流式，保留复用
+    void StartTTSRequest(const FString& Text, TWeakObjectPtr<AActor> WeakTarget, int32 RetryCount = 0); // 旧非流式，保留复用
     void StartNextLocked(); // 启动下一条（需已持锁）
     static bool AnimateWithACE(AActor* TargetActor, const int16* Samples, int32 NumSamples, int32 SampleRate, int32 NumChannels);
 };

@@ -1,15 +1,9 @@
-import { ArcwareInit } from '@arcware-cloud/pixelstreaming-websdk';
+﻿import { ArcwareInit } from '@arcware-cloud/pixelstreaming-websdk';
 import { createChatBar, wireChatBar } from './chatBar';
 import { PSBridge, arcwareAdapter } from './psBridge';
+import { ensurePlayerContainer, createStateChecker, createChatBarOptions } from './shared';
 
 const defaultShareId = "share-beeb6fb6-2bc4-4e14-8df7-6ea9d4f4f9c7";
-
-function ensurePlayerContainer(): HTMLElement {
-  let c = document.getElementById('player');
-  if (!c) { c = document.createElement('div'); c.id = 'player';
-    Object.assign(c.style, { width: '100%', height: '100svh', background: '#000' }); document.body.appendChild(c); }
-  return c;
-}
 
 function bootArcware(shareId: string, projectId?: string) {
   const container = ensurePlayerContainer();
@@ -24,38 +18,19 @@ function bootArcware(shareId: string, projectId?: string) {
 
   const bridge = new PSBridge(arcwareAdapter(Application));
 
-  const { root, input, btn, setSendEnabled, setBusy } = createChatBar();
+  const { root, input, btn, setSendEnabled } = createChatBar();
   document.body.appendChild(root);
 
-  // 发送文本
-  wireChatBar((p)=>bridge.request({ ...p, type:'chat' }), input, btn, {
-    beforeSend: async () => {
-      // 这里统一走“询问 UE 是否能接收新消息”
-      try {
-        const ok = await bridge.request<boolean>({
-          type:'call',
-          target: { by:'tag', value:'Avatar' },     // 你可以改成 by:'name'
-          component:'HumanState',
-          method:'CanReceiveNewMessage'
-        });
-        setSendEnabled(ok);
-        return ok;
-      } catch { setSendEnabled(false); return false; }
-    }
-  });
+  // 使用共享的状态检查器
+  const { startPeriodicCheck } = createStateChecker(bridge, setSendEnabled);
+  
+  // 使用标准的聊天栏配置
+  const chatBarOptions = createChatBarOptions(bridge, setSendEnabled);
 
-  // 定时刷新“是否可发”
-  setInterval(async () => {
-    try {
-      const ok = await bridge.request<boolean>({
-        type:'call',
-        target: { by:'tag', value:'Avatar' },
-        component:'HumanState',
-        method:'CanReceiveNewMessage'
-      });
-      setSendEnabled(!!ok);
-    } catch { setSendEnabled(false); }
-  }, 500);
+  wireChatBar((p)=>bridge.request({ ...p, type:'chat' }), input, btn, chatBarOptions);
+
+  // 启动定时检查
+  startPeriodicCheck();
 
   (window as any).arcwareApp = { Config, PixelStreaming, Application, bridge };
 }

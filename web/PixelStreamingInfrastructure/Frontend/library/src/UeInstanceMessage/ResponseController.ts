@@ -31,8 +31,20 @@ export class ResponseController {
         const responses = new TextDecoder('utf-16').decode(message.slice(1));
 
         Logger.Info(responses);
-        this.responseEventListeners.forEach((listener: (response: string) => void) => {
-            listener(responses);
+        this.responseEventListeners.forEach((listener: (response: string) => void, key: string) => {
+            try {
+                if (typeof listener === 'function') {
+                    listener(responses);
+                } else {
+                    Logger.Warning(
+                        `[ResponseController] Skipped non-function listener for key "${key}": ${JSON.stringify(listener)}`
+                    );
+                }
+            } catch (err) {
+                Logger.Error(
+                    `[ResponseController] Error in listener "${key}": ${err instanceof Error ? err.message : String(err)}`
+                );
+            }
         });
     }
 }

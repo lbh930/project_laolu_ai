@@ -133,6 +133,13 @@ void UWebInterfaceSubsystem::ReceiveUIMessage(const FString& JsonOrText)
 			if (TryParseChatText(TrimmedJsonOrText, ChatText) && !ChatText.IsEmpty())
 			{
 				OnUserInputReceived.Broadcast(ChatText);
+
+				// Extract requestId if present
+				FString RequestId;
+				Root->TryGetStringField(TEXT("requestId"), RequestId);
+
+				// Send ACK response
+				SendPS2Response(true, RequestId, TEXT("Chat received"), false);
 			}
 			return;
 		}

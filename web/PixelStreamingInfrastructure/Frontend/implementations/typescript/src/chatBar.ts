@@ -1,6 +1,6 @@
 export function createChatBar(): {
   root: HTMLDivElement; input: HTMLInputElement; btn: HTMLButtonElement;
-  setSendEnabled: (ok: boolean)=>void; setBusy: (b: boolean)=>void;
+  setSendEnabled: (ok: boolean)=>void;
 } {
   const root = document.createElement('div');
   Object.assign(root.style, {
@@ -11,7 +11,8 @@ export function createChatBar(): {
   } as CSSStyleDeclaration);
 
   const input = document.createElement('input');
-  input.type = 'text'; input.placeholder = '输入要发给数字人的文本...';
+  input.type = 'text';
+  input.placeholder = '输入要发给数字人的文本...';
   Object.assign(input.style, {
     flex: '1', padding: '10px 12px', borderRadius: '8px',
     border: '1px solid #555', outline: 'none', background: '#111', color: '#eee',
@@ -24,37 +25,71 @@ export function createChatBar(): {
     cursor: 'pointer', fontWeight: '600', background: '#e6e6e6',
   } as CSSStyleDeclaration);
 
+  // ✅ 外部调用 setSendEnabled：设置按钮状态
   const setSendEnabled = (ok: boolean) => {
     btn.disabled = !ok;
+    btn.textContent = ok ? '发送222' : '等待中…';
     btn.style.opacity = ok ? '1.0' : '0.5';
-    btn.textContent = ok ? '发送' : '等待中…';
   };
 
-  const setBusy = (b: boolean) => {
-    btn.disabled = b || btn.disabled;
-    btn.style.opacity = b ? '0.6' : (btn.disabled ? '0.5' : '1.0');
-  };
-
-  root.appendChild(input); root.appendChild(btn);
-  return { root, input, btn, setSendEnabled, setBusy };
+  root.appendChild(input);
+  root.appendChild(btn);
+  return { root, input, btn, setSendEnabled };
 }
 
-export function wireChatBar(send: (payload: any) => Promise<any> | void,
-  input: HTMLInputElement, btn: HTMLButtonElement,
-  opts?: { beforeSend?: ()=>Promise<boolean>|boolean; onDone?: ()=>void }
+export function wireChatBar(
+  send: (payload: any) => Promise<any> | void,
+  input: HTMLInputElement,
+  btn: HTMLButtonElement,
+  opts?: { onDone?: ()=>void; setSendEnabled?: (enabled: boolean) => void }
 ) {
   const stop = (e: Event) => e.stopPropagation();
   input.addEventListener('keydown', stop, { capture: true });
   input.addEventListener('keyup', stop, { capture: true });
   input.addEventListener('keypress', stop, { capture: true });
 
+  let isSending = false;
+
   async function sendCurrent() {
+    console.log('[ChatBar] ✅ sendCurrent called');
     const text = (input.value ?? '').trim();
-    if (!text) return;
-    if (opts?.beforeSend && !(await opts.beforeSend())) return;
-    try { await send({ type:'chat', text }); } catch {}
-    input.value = ''; input.focus(); opts?.onDone?.();
+    if (!text || isSending) return;
+
+    isSending = true;
+    btn.disabled = true;
+    btn.textContent = '发送中...';
+    btn.style.opacity = '0.6';
+    console.log('[ChatBar] 🚀 Sending started');
+
+    try {
+      await send({ type: 'chat', text });
+      input.value = '';
+      input.focus();
+      console.log('[ChatBar] ✅ Message sent and input cleared');
+
+      // 保持发送中状态，不立即恢复
+      if (opts?.onDone) opts.onDone();
+
+    } catch (err) {
+      console.warn('[ChatBar] ❌ Send failed:', err);
+      btn.disabled = false;
+      btn.textContent = '发送';
+      btn.style.opacity = '1.0';
+    } finally {
+      isSending = false;
+    }
   }
-  input.addEventListener('keydown', (e: KeyboardEvent) => { if (e.key === 'Enter') { e.preventDefault(); sendCurrent(); } });
-  btn.addEventListener('click', () => sendCurrent());
+
+  input.addEventListener('keydown', (e: KeyboardEvent) => {
+    if (e.key === 'Enter' && !btn.disabled) {
+      e.preventDefault();
+      sendCurrent();
+    }
+  });
+
+  btn.addEventListener('click', () => {
+    if (!btn.disabled) {
+      sendCurrent();
+    }
+  });
 }

@@ -6,13 +6,7 @@ import { Application as EpicApplication, PixelStreamingApplicationStyle } from '
 
 import { createChatBar, wireChatBar } from './chatBar';
 import { PSBridge, epicAdapter } from './psBridge';
-
-function ensurePlayerContainer(): HTMLElement {
-  let c = document.getElementById('player');
-  if (!c) { c = document.createElement('div'); c.id = 'player';
-    Object.assign(c.style, { width: '100%', height: '100svh', background: '#000' }); document.body.appendChild(c); }
-  return c;
-}
+import { ensurePlayerContainer, createStateChecker, createChatBarOptions } from './shared';
 
 function bootEpic() {
   Logger.InitLogging(LogLevel.Warning, true);
@@ -29,32 +23,16 @@ function bootEpic() {
   const { root, input, btn, setSendEnabled } = createChatBar();
   document.body.appendChild(root);
 
-  wireChatBar((p)=>bridge.request({ ...p, type:'chat' }), input, btn, {
-    beforeSend: async () => {
-      try {
-        const ok = await bridge.request<boolean>({
-          type:'call',
-          target: { by:'tag', value:'Avatar' },
-          component:'HumanState',
-          method:'CanReceiveNewMessage'
-        });
-        setSendEnabled(ok);
-        return ok;
-      } catch { setSendEnabled(false); return false; }
-    }
-  });
+  // 使用共享的状态检查器
+  const { startPeriodicCheck } = createStateChecker(bridge, setSendEnabled);
+  
+  // 使用标准的聊天栏配置
+  const chatBarOptions = createChatBarOptions(bridge, setSendEnabled);
 
-  setInterval(async () => {
-    try {
-      const ok = await bridge.request<boolean>({
-        type:'call',
-        target: { by:'tag', value:'Avatar' },
-        component:'HumanState',
-        method:'CanReceiveNewMessage'
-      });
-      setSendEnabled(!!ok);
-    } catch { setSendEnabled(false); }
-  }, 500);
+  wireChatBar((p)=>bridge.request({ ...p, type:'chat' }), input, btn, chatBarOptions);
+
+  // 启动定时检查
+  startPeriodicCheck();
 
   (window as any).pixelStreaming = stream;
   (window as any).bridge = bridge;

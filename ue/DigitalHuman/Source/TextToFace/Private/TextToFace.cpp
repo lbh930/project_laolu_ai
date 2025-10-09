@@ -114,7 +114,7 @@ void UTextToFaceEngine::StartNextLocked()
 
     UE_LOG(LogTextToFace, Verbose, TEXT("[Queue] start next. remain=%d"), UtterQueue.Num());
 
-    StartTTSRequest(Item.Text, Item.Target); // 复用旧路径
+    StartTTSRequest(Item.Text, Item.Target, Item.RetryCount); // 传递重试计数
 }
 
 static const TCHAR* HttpReqStatusToString(EHttpRequestStatus::Type S)
@@ -163,7 +163,7 @@ static void LogHttpFailure(const FString& Context,
 }
 
 // （可留存的旧非流式 StartTTSRequest / AnimateWithACE）
-void UTextToFaceEngine::StartTTSRequest(const FString& Text, TWeakObjectPtr<AActor> WeakTarget)
+void UTextToFaceEngine::StartTTSRequest(const FString& Text, TWeakObjectPtr<AActor> WeakTarget, int32 RetryCount)
 {
     const FString Url = FString::Printf(
         TEXT("https://api.elevenlabs.io/v1/text-to-speech/%s?output_format=pcm_16000"),
@@ -175,6 +175,7 @@ void UTextToFaceEngine::StartTTSRequest(const FString& Text, TWeakObjectPtr<AAct
     Req->SetHeader(TEXT("xi-api-key"), XiApiKey);
     Req->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
     Req->SetHeader(TEXT("Accept"), TEXT("audio/pcm")); // 期望 RAW PCM16
+    Req->SetTimeout(TimeoutSeconds); // 设置超时时间
 
     // 构造 JSON
     TSharedPtr<FJsonObject> Body = MakeShared<FJsonObject>();
@@ -186,13 +187,20 @@ void UTextToFaceEngine::StartTTSRequest(const FString& Text, TWeakObjectPtr<AAct
     FJsonSerializer::Serialize(Body.ToSharedRef(), Writer);
     Req->SetContentAsString(BodyStr);
 
-    UE_LOG(LogTextToFace, Log, TEXT("ElevenLabs TTS request: %s"), *Url);
+    if (RetryCount > 0)
+    {
+        UE_LOG(LogTextToFace, Warning, TEXT("ElevenLabs TTS request (Retry %d/%d): %s"), RetryCount, MaxRetries, *Url);
+    }
+    else
+    {
+        UE_LOG(LogTextToFace, Log, TEXT("ElevenLabs TTS request: %s"), *Url);
+    }
 
     // 关键：弱引用 self，避免回调时对象已被 GC
     TWeakObjectPtr<UTextToFaceEngine> WeakSelf(this);
 
     Req->OnProcessRequestComplete().BindLambda(
-        [WeakSelf, WeakTarget](FHttpRequestPtr Request, FHttpResponsePtr Response, bool bSucceeded)
+        [WeakSelf, WeakTarget, Text, RetryCount](FHttpRequestPtr Request, FHttpResponsePtr Response, bool bSucceeded)
         {
             UTextToFaceEngine* Self = WeakSelf.Get();
             if (!IsValid(Self)) { return; } // self 已无效
@@ -214,6 +222,29 @@ void UTextToFaceEngine::StartTTSRequest(const FString& Text, TWeakObjectPtr<AAct
             {
                 LogHttpFailure(TEXT("TTS"), Request, Response, bSucceeded);
 
+                // 检查是否需要重试
+                if (RetryCount < MaxRetries)
+                {
+                    UE_LOG(LogTextToFace, Warning, TEXT("[TTS] Retrying request (%d/%d)..."), RetryCount + 1, MaxRetries);
+                    
+                    // 重新入队到队列头部，增加重试计数
+                    {
+                        FScopeLock _(&Self->QueueMtx);
+                        Self->bSpeaking = false;
+                        FUtterItem RetryItem;
+                        RetryItem.Text = Text;
+                        RetryItem.Target = WeakTarget;
+                        RetryItem.RetryCount = RetryCount + 1;
+                        Self->UtterQueue.Insert(RetryItem, 0); // 插入队列头部
+                        Self->StartNextLocked();
+                    }
+                    return;
+                }
+                else
+                {
+                    UE_LOG(LogTextToFace, Error, TEXT("[TTS] Max retries reached. Giving up on this utterance."));
+                }
+
                 {
                     FScopeLock _(&Self->QueueMtx);
                     Self->bSpeaking = false;
@@ -228,6 +259,25 @@ void UTextToFaceEngine::StartTTSRequest(const FString& Text, TWeakObjectPtr<AAct
             if (Code < 200 || Code >= 300)
             {
                 UE_LOG(LogTextToFace, Error, TEXT("HTTP %d: %s"), Code, *Response->GetContentAsString());
+                
+                // 服务器错误也尝试重试
+                if (RetryCount < MaxRetries && (Code >= 500 || Code == 429)) // 服务器错误或限流
+                {
+                    UE_LOG(LogTextToFace, Warning, TEXT("[TTS] Server error %d, retrying (%d/%d)..."), Code, RetryCount + 1, MaxRetries);
+                    
+                    {
+                        FScopeLock _(&Self->QueueMtx);
+                        Self->bSpeaking = false;
+                        FUtterItem RetryItem;
+                        RetryItem.Text = Text;
+                        RetryItem.Target = WeakTarget;
+                        RetryItem.RetryCount = RetryCount + 1;
+                        Self->UtterQueue.Insert(RetryItem, 0);
+                        Self->StartNextLocked();
+                    }
+                    return;
+                }
+                
                 {
                     FScopeLock _(&Self->QueueMtx);
                     Self->bSpeaking = false;

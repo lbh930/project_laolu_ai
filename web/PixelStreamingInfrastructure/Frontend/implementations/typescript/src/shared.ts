@@ -139,20 +139,35 @@ export function createStateChecker(bridge: PSBridge, setSendEnabled: (enabled: b
 export interface ChatBarOptions {
   onDone?: () => void;
   setSendEnabled: (enabled: boolean) => void;
+  setButtonState?: (state: 'ready' | 'waiting' | 'sending' | 'sent') => void;
 }
 
 /**
  * 创建标准的聊天栏配置选项
  */
-export function createChatBarOptions(bridge: PSBridge, setSendEnabled: (enabled: boolean) => void): ChatBarOptions {
+export function createChatBarOptions(
+  bridge: PSBridge, 
+  setSendEnabled: (enabled: boolean) => void, 
+  setButtonState?: (state: 'ready' | 'waiting' | 'sending' | 'sent') => void,
+  getCurrentState?: () => 'ready' | 'waiting' | 'sending' | 'sent'
+): ChatBarOptions {
   createStateChecker(bridge, setSendEnabled);
   
   return {
     onDone: () => {
-      console.log('[ChatBar] ✅ Send completed, delaying next state check...');
+      console.log('[ChatBar] ✅ Send completed, checking current state...');
+      // 只有在当前状态是发送中才可以改成已发送
+      const currentState = getCurrentState?.();
+      if (currentState === 'sending') {
+        console.log('[ChatBar] 📤 Current state is sending, changing to sent');
+        setButtonState?.('sent');
+      } else {
+        console.log('[ChatBar] ⚠️ Current state is not sending, skipping state change. Current:', currentState);
+      }
       // 发送完成后延后下一次状态检查，给UE时间处理消息
       globalStateChecker.delayNextCheck(1000);
     },
-    setSendEnabled: setSendEnabled
+    setSendEnabled: setSendEnabled,
+    setButtonState: setButtonState
   };
 }

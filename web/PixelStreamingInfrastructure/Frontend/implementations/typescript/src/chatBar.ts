@@ -1,6 +1,9 @@
+// 按钮状态枚举
+type ButtonState = 'ready' | 'waiting' | 'sending' | 'sent';
+
 export function createChatBar(): {
   root: HTMLDivElement; input: HTMLInputElement; btn: HTMLButtonElement;
-  setSendEnabled: (ok: boolean)=>void;
+  setSendEnabled: (ok: boolean)=>void; setButtonState: (state: ButtonState) => void; getCurrentState: () => ButtonState;
 } {
   const root = document.createElement('div');
   Object.assign(root.style, {
@@ -25,23 +28,58 @@ export function createChatBar(): {
     cursor: 'pointer', fontWeight: '600', background: '#e6e6e6',
   } as CSSStyleDeclaration);
 
+  let currentState: ButtonState = 'ready';
+
+  // 根据状态更新按钮外观
+  const updateButtonByState = (state: ButtonState) => {
+    currentState = state;
+    switch (state) {
+      case 'ready':
+        btn.disabled = false;
+        btn.textContent = '发送';
+        btn.style.opacity = '1.0';
+        break;
+      case 'waiting':
+        btn.disabled = true;
+        btn.textContent = '等待中…';
+        btn.style.opacity = '0.5';
+        break;
+      case 'sending':
+        btn.disabled = true;
+        btn.textContent = '发送中...';
+        btn.style.opacity = '0.6';
+        break;
+      case 'sent':
+        btn.disabled = true;
+        btn.textContent = '已发送';
+        btn.style.opacity = '0.7';
+        break;
+    }
+  };
+
   // ✅ 外部调用 setSendEnabled：设置按钮状态
   const setSendEnabled = (ok: boolean) => {
-    btn.disabled = !ok;
-    btn.textContent = ok ? '发送222' : '等待中…';
-    btn.style.opacity = ok ? '1.0' : '0.5';
+    updateButtonByState(ok ? 'ready' : 'waiting');
+  };
+
+  const setButtonState = (state: ButtonState) => {
+    updateButtonByState(state);
+  };
+
+  const getCurrentState = (): ButtonState => {
+    return currentState;
   };
 
   root.appendChild(input);
   root.appendChild(btn);
-  return { root, input, btn, setSendEnabled };
+  return { root, input, btn, setSendEnabled, setButtonState, getCurrentState };
 }
 
 export function wireChatBar(
   send: (payload: any) => Promise<any> | void,
   input: HTMLInputElement,
   btn: HTMLButtonElement,
-  opts?: { onDone?: ()=>void; setSendEnabled?: (enabled: boolean) => void }
+  opts?: { onDone?: ()=>void; setSendEnabled?: (enabled: boolean) => void; setButtonState?: (state: ButtonState) => void }
 ) {
   const stop = (e: Event) => e.stopPropagation();
   input.addEventListener('keydown', stop, { capture: true });
@@ -56,9 +94,7 @@ export function wireChatBar(
     if (!text || isSending) return;
 
     isSending = true;
-    btn.disabled = true;
-    btn.textContent = '发送中...';
-    btn.style.opacity = '0.6';
+    opts?.setButtonState?.('sending');
     console.log('[ChatBar] 🚀 Sending started');
 
     try {
@@ -72,9 +108,7 @@ export function wireChatBar(
 
     } catch (err) {
       console.warn('[ChatBar] ❌ Send failed:', err);
-      btn.disabled = false;
-      btn.textContent = '发送';
-      btn.style.opacity = '1.0';
+      opts?.setButtonState?.('ready');
     } finally {
       isSending = false;
     }

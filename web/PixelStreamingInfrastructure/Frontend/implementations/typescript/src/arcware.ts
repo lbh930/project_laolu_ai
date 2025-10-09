@@ -18,14 +18,14 @@ function bootArcware(shareId: string, projectId?: string) {
 
   const bridge = new PSBridge(arcwareAdapter(Application));
 
-  const { root, input, btn, setSendEnabled } = createChatBar();
+  const { root, input, btn, setSendEnabled, setButtonState, getCurrentState } = createChatBar();
   document.body.appendChild(root);
 
   // 使用共享的状态检查器
   const { startPeriodicCheck } = createStateChecker(bridge, setSendEnabled);
   
   // 使用标准的聊天栏配置
-  const chatBarOptions = createChatBarOptions(bridge, setSendEnabled);
+  const chatBarOptions = createChatBarOptions(bridge, setSendEnabled, setButtonState, getCurrentState);
 
   wireChatBar((p)=>bridge.request({ ...p, type:'chat' }), input, btn, chatBarOptions);
 
